@@ -11,6 +11,12 @@ MCP is an open protocol created by Anthropic that enables AI systems to interact
 - **Full IPython support** - magic commands, rich display, etc.
 - **Real-time collaboration** - you code in IDE, Claude can inspect/debug
 
+## Windows Users: WSL Recommendation
+
+**⚠️ Important for Windows users**: For optimal functionality, it is highly recommended to run both the MCP server and your IPython kernel inside WSL (Windows Subsystem for Linux). This ensures the server can interrupt infinite loops and runaway queries that LLMs might accidentally generate.
+
+Running the MCP server on Windows (outside WSL) disables interrupt functionality, which is critical for escaping problematic code during AI-assisted development sessions.
+
 ## Requirements
 
 - Python 3.8+
@@ -359,3 +365,54 @@ This MCP server acts as a **bridge** between Claude and existing IPython kernels
 - **Simplicity**: MCP server focuses on communication, not process management
 
 The `start_kernel` tool is provided as a **convenience helper** - not a requirement. Many users prefer to start kernels through their IDE, Jupyter, or custom scripts.
+
+## Kernel Interruption and Shutdown
+
+### IPython Kernel Interrupt Modes
+
+IPython kernels support two different interrupt modes that determine how clients can stop running code:
+
+**1. Signal Mode (Default)**
+- Uses operating system signals (SIGINT on Unix, equivalent on Windows)
+- Only direct signals to the kernel process can interrupt execution
+- IDE clients sending interrupt requests via Jupyter protocol are ignored
+- This is why CTRL+C in your IDE often doesn't work, but CTRL+C in the kernel window does
+
+**2. Message Mode**
+- Uses `interrupt_request` messages via the control socket (Jupyter protocol)
+- IDE clients can interrupt via standard Jupyter protocol messages
+- Direct OS signals to the process may be ignored
+- Must be configured in the kernel's kernelspec with `"interrupt_mode": "message"`
+
+### Our Implementation
+
+This MCP server implements a **dual-method approach** that works with both interrupt modes:
+
+**Method 1: Jupyter Protocol (First Attempt)**
+- Sends `interrupt_request` messages via the control socket
+- Works for kernels configured with `interrupt_mode: "message"`
+- Clean, protocol-compliant method
+
+**Method 2: OS Signal Fallback**
+- Uses `psutil` to send SIGINT directly to the kernel process
+- Works for default kernels using `interrupt_mode: "signal"`
+- Handles 99% of standard IPython installations
+- **Limitations**: SIGINT functionality disabled when:
+  - MCP server runs on Windows (outside WSL)
+  - MCP server and IPython kernel run on opposite sides of WSL/Windows divide
+
+The interrupt tool first tries the control socket approach, then falls back to direct SIGINT if needed.
+
+### Available Tools
+
+- **`interrupt_kernel()`** - Stop currently running code using dual-method approach
+- **`shutdown_kernel()`** - Gracefully shutdown kernel via Jupyter protocol, with forceful termination fallback
+
+This approach ensures reliable kernel management across different configurations and platforms without requiring users to modify their kernel setup.
+
+## Known Limitations
+
+### Kernel Interruption (SIGINT) Limitations
+- **Windows Platform**: Kernel interruption disabled when MCP server runs on Windows (outside WSL)
+- **Cross-Platform Setup**: Kernel interruption disabled when MCP server and IPython kernel run on opposite sides of WSL/Windows divide
+- **Impact**: LLM cannot automatically escape infinite loops or cancel runaway code in these configurations
